@@ -108,17 +108,22 @@ class UberAPI
     JSON.parse(result.body)
   end
 
-  def self.cancel_ride(request_id, bearer_header)
-    begin
-      RestClient.delete(
-        "#{BASE_URL}/v1/requests/#{request_id}",
-        authorization: bearer_header,
-        "Content-Type" => :json,
-        accept: 'json'
-      )
-    rescue RestClient::Exception => e
-      Rollbar.error(e, "UberCommand#cancel")
+  def self.get_default_product_id_for_lat_lng(lat, lng)
+    product_id = Rails.cache.fetch("location: #{lat}/#{lng}", expires_in: 15.minutes) do
+      available_products = get_products_for_lat_lng(lat, lng)["products"]
+      available_products.empty? ? nil : available_products.first["product_id"]
     end
+
+    product_id
+  end
+
+  def self.cancel_ride(request_id, bearer_header)
+    RestClient.delete(
+      "#{BASE_URL}/v1/requests/#{request_id}",
+      authorization: bearer_header,
+      "Content-Type" => :json,
+      accept: 'json'
+    )
   end
 
   def self.accept_surge(ride, bearer_header)

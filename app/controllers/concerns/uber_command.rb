@@ -51,32 +51,22 @@ class UberCommand
 
     start_addr, end_addr = parse_start_and_end_address(user_request)
 
-    product_id = get_default_product_id_for_lat_lng(origin_lat, origin_lng)
+    product_id = UberAPI.get_default_product_id_for_lat_lng(origin_lat, origin_lng)
     return [
       "Sorry, we did not find any Uber products available near #{start_addr}.",
       "Can you try again with a more precise address?"
     ].join(" ") if product_id.nil?
 
-    begin
-      body = {
-        "start_latitude" => origin_lat,
-        "start_longitude" => origin_lng,
-        "end_latitude" => destination_lat,
-        "end_longitude" => destination_lng,
-        "product_id" => product_id
-      }
+    body = {
+      "start_latitude" => origin_lat,
+      "start_longitude" => origin_lng,
+      "end_latitude" => destination_lat,
+      "end_longitude" => destination_lng,
+      "product_id" => product_id
+    }
 
-      ride_estimate_hash = UberAPI.get_ride_estimate(body, bearer_header)
-    rescue => e
-      Rollbar.error(e, "UberCommand#estimate")
-      return [
-        "Sorry, we could not get time and price estimates for a trip",
-        "from #{start_addr} to #{end_addr}.",
-        "Can you try again with more precise addresses?"
-      ].join(" ")
-    end
-
-    format_ride_estimate_response(start_addr, end_addr, ride_estimate_hash)
+    GetRideEstimateJob.perform_later(start_addr, end_addr, body, bearer_header, @slack_url)
+    "All right. Asking Uber for your estimate now."
   end
 
   def help(_) # No command argument.
@@ -98,47 +88,17 @@ class UberCommand
     ride = Ride.where(user_id: @user_id).order(:updated_at).last
     return "Sorry, we couldn't find any rides that you requested." if ride.nil?
 
-    begin
-      status_hash = UberAPI.get_ride_status(ride.request_id, bearer_header)
-    rescue => e
-      Rollbar.error(e, "UberCommand#status")
-      return "Sorry, we weren't able to get your ride status from Uber."
-    end
-
-    ride_status = status_hash["status"]
-
-    eta = status_hash["eta"]
-    eta_msg = eta ? "ETA: #{eta} minutes" : nil
-    eta_msg = "ETA: one minute" if eta == 1
-
-    if %w(
-      processing
-      accepted
-      arriving
-      in_progress
-    ).include?(ride_status)
-      return [
-        "STATUS:",
-        SlackResponse::Messages::RIDE_STATUSES[ride_status],
-        eta_msg
-      ].compact.join(" ")
-    end
-
-    "STATUS: #{SlackResponse::Messages::RIDE_STATUSES[ride_status]}"
+    GetRideStatusJob.perform_later(ride.request_id, @slack_url)
+    "Got it. Asking Uber for your ride's status now."
   end
 
   def cancel(_) # No command argument.
     ride = Ride.where(user_id: @user_id).order(:updated_at).last
     return "Sorry, we couldn't find a ride for you to cancel." if ride.nil?
 
-    request_id = ride.request_id
+    CancelRideJob.perform_later(ride.request_id, bearer_header)
 
-    fail_msg = "Sorry, we were unable to cancel your ride."
-
-    resp = UberAPI.cancel_ride(request_id, bearer_header)
-
-    return "Successfully canceled your ride." if resp.try(:code) == 204
-    fail_msg
+    "OK. Telling Uber to cancel your ride request."
   end
 
   def accept(stated_multiplier)
@@ -172,7 +132,7 @@ class UberCommand
 
     start_addr, end_addr = parse_start_and_end_address(user_request)
 
-    product_id = get_default_product_id_for_lat_lng(origin_lat, origin_lng)
+    product_id = UberAPI.get_default_product_id_for_lat_lng(origin_lat, origin_lng)
     return [
       "Sorry, we did not find any Uber products available near '#{start_addr}'.",
       "Can you try again with a more precise address?"

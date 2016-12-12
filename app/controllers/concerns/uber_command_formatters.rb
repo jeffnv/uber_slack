@@ -31,14 +31,6 @@ module UberCommandFormatters
     [origin_name, destination_name]
   end
 
-  def get_default_product_id_for_lat_lng(lat, lng)
-    product_id = Rails.cache.fetch("location: #{lat}/#{lng}", expires_in: 15.minutes) do
-      available_products = UberAPI.get_products_for_lat_lng(lat, lng, bearer_header)["products"]
-      available_products.empty? ? nil : available_products.first["product_id"]
-    end
-
-    product_id
-  end
 
   def format_200_ride_request_response(origin, destination, _response)
     ack = ["Got it!", "Roger that.", "OK.", "10-4."].sample
